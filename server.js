@@ -1,5 +1,7 @@
 // 零依赖版本 - 仅使用 Node.js 内置模块
-// 启动: node server.js
+// 本地启动: node server.js
+// Vercel serverless: 见 api/index.js 调用 module.exports.handleRequest
+// Render / 其他容器: node server.js
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -8,180 +10,186 @@ const crypto = require('crypto');
 
 const PORT = process.env.PORT || 3000;
 const HOST = '0.0.0.0';
-
 const ROOT = __dirname;
 
-// 管理后台密码 - 支持环境变量覆盖（部署到公网时务必设置 ADMIN_PASSWORD）
-const ADMIN_PASSWORD_HASH = crypto.createHash('sha256').update(process.env.ADMIN_PASSWORD || '522428').digest('hex');
-
-// 会话存储（内存中，服务器重启会失效）
-const sessions = new Map();
-const SESSION_TTL = 24 * 60 * 60 * 1000; // 24小时
-
-function generateSessionToken() {
-  return crypto.randomBytes(32).toString('hex');
+// ============== 密码：支持环境变量 ADMIN_PASSWORD ==============
+function getAdminPasswordHash() {
+  const pwd = process.env.ADMIN_PASSWORD || '522428';
+  return crypto.createHash('sha256').update(pwd).digest('hex');
 }
 
+// ============== 会话（内存中，重启/冷启动会重置） ==============
+const sessions = new Map();
+const SESSION_TTL = 24 * 60 * 60 * 1000;
+
+function generateSessionToken() { return crypto.randomBytes(32).toString('hex'); }
 function verifySession(req) {
   const cookies = req.headers['cookie'] || '';
-  const match = cookies.match(/grsy_session=([^;]+)/);
-  if (!match) return false;
-  const token = match[1];
-  const session = sessions.get(token);
-  if (!session) return false;
-  if (Date.now() - session.createdAt > SESSION_TTL) {
-    sessions.delete(token);
-    return false;
-  }
+  const m = cookies.match(/grsy_session=([^;]+)/);
+  if (!m) return false;
+  const token = m[1];
+  const s = sessions.get(token);
+  if (!s) return false;
+  if (Date.now() - s.createdAt > SESSION_TTL) { sessions.delete(token); return false; }
   return true;
 }
 
-// 检测目录是否可写
+// ============== 目录回退（可写性探测） ==============
 function isDirectoryWritable(dir) {
   try {
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    const testFile = path.join(dir, '.write_test_' + Date.now());
-    fs.writeFileSync(testFile, 'test');
-    fs.unlinkSync(testFile);
-    return true;
-  } catch (e) {
-    return false;
-  }
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const t = path.join(dir, '.w_' + Date.now() + Math.random());
+    fs.writeFileSync(t, 'x'); fs.unlinkSync(t); return true;
+  } catch (e) { return false; }
 }
+function requireDir(d) { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); return d; }
 
-// 将项目目录中的文件迁移到临时目录
-function migrateFilesFromProject(projectDir, tempDir) {
-  try {
-    if (fs.existsSync(projectDir) && fs.statSync(projectDir).isDirectory()) {
-      const files = fs.readdirSync(projectDir).filter(f => {
-        const fp = path.join(projectDir, f);
-        return fs.statSync(fp).isFile() && !f.startsWith('.');
-      });
-      let migrated = 0;
-      files.forEach(f => {
-        const src = path.join(projectDir, f);
-        const dst = path.join(tempDir, f);
-        if (!fs.existsSync(dst)) {
-          try { fs.copyFileSync(src, dst); migrated++; } catch (e) { /* 忽略 */ }
-        }
-      });
-      if (migrated > 0) console.log(`  已从项目目录迁移 ${migrated} 个文件`);
-    }
-  } catch (e) { /* 忽略迁移错误 */ }
-}
-
-// 获取可写的上传目录（支持回退到系统临时目录）
 function getUploadDir() {
-  const projectUploadDir = path.join(ROOT, 'uploads');
-  if (isDirectoryWritable(projectUploadDir)) {
-    return projectUploadDir;
-  }
-  // 回退到系统临时目录
-  const tempUploadDir = path.join(require('os').tmpdir(), 'grsy_uploads');
-  fs.mkdirSync(tempUploadDir, { recursive: true });
-  console.warn(`项目上传目录不可写，使用临时目录: ${tempUploadDir}`);
-  // 迁移已有上传文件
-  migrateFilesFromProject(projectUploadDir, tempUploadDir);
-  return tempUploadDir;
+  const osTmp = require('os').tmpdir();
+  // 部署环境优先 tmp；本地开发优先项目 uploads/
+  const candidates = (process.env.VERCEL || process.env.RENDER || process.env.GITHUB_TOKEN)
+    ? [path.join(osTmp, 'grsy_uploads')]
+    : [path.join(ROOT, 'uploads'), path.join(osTmp, 'grsy_uploads')];
+  for (const d of candidates) if (isDirectoryWritable(d)) return requireDir(d);
+  return requireDir(candidates[0]);
 }
-
-// 获取可写的数据目录
 function getDataDir() {
-  const projectDataDir = path.join(ROOT, 'data');
-  if (isDirectoryWritable(projectDataDir)) {
-    return projectDataDir;
-  }
-  // 回退到系统临时目录
-  const tempDataDir = path.join(require('os').tmpdir(), 'grsy_data');
-  fs.mkdirSync(tempDataDir, { recursive: true });
-  console.warn(`项目数据目录不可写，使用临时目录: ${tempDataDir}`);
-  // 迁移已有数据文件
-  const projectDataFile = path.join(projectDataDir, 'works.json');
-  const tempDataFile = path.join(tempDataDir, 'works.json');
-  if (fs.existsSync(projectDataFile)) {
-    try {
-      // 如果临时目录没有数据，或者项目目录数据更多，则合并
-      const projectData = JSON.parse(fs.readFileSync(projectDataFile, 'utf-8'));
-      let tempData = [];
-      if (fs.existsSync(tempDataFile)) {
-        try { tempData = JSON.parse(fs.readFileSync(tempDataFile, 'utf-8')); } catch (e) { /* 忽略 */ }
-      }
-      const existingIds = new Set(tempData.map(w => w.id));
-      const merged = [...tempData, ...projectData.filter(w => !existingIds.has(w.id))];
-      if (merged.length > tempData.length) {
-        fs.writeFileSync(tempDataFile, JSON.stringify(merged, null, 2));
-        console.log(`  已从项目数据迁移 ${merged.length - tempData.length} 条作品数据`);
-      }
-    } catch (e) { /* 忽略迁移错误 */ }
-  }
-  return tempDataDir;
+  const osTmp = require('os').tmpdir();
+  const candidates = (process.env.VERCEL || process.env.RENDER || process.env.GITHUB_TOKEN)
+    ? [path.join(osTmp, 'grsy_data')]
+    : [path.join(ROOT, 'data'), path.join(osTmp, 'grsy_data')];
+  for (const d of candidates) if (isDirectoryWritable(d)) return requireDir(d);
+  return requireDir(candidates[0]);
 }
 
 const UPLOAD_DIR = getUploadDir();
 const DATA_DIR = getDataDir();
 const DATA_FILE = path.join(DATA_DIR, 'works.json');
 const PUBLIC_DIR = path.join(ROOT, 'public');
+requireDir(UPLOAD_DIR); requireDir(DATA_DIR);
+if (!fs.existsSync(DATA_FILE)) fs.writeFileSync(DATA_FILE, JSON.stringify([], null, 2));
 
-// 确保目录存在
-[UPLOAD_DIR, DATA_DIR].forEach(dir => {
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-});
-if (!fs.existsSync(DATA_FILE)) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify([], null, 2));
-}
-
-// GitHub 数据同步（可选）：数据变更后自动备份到仓库，冷启动时自动恢复
-const sync = require('./sync');
-sync.init({ uploadDir: UPLOAD_DIR, dataFile: DATA_FILE });
-
-// 读取/写入作品数据
-function readWorks() {
-  try { return JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8')); }
-  catch (e) { return []; }
-}
+function readWorks() { try { return JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8')); } catch (e) { return []; } }
 function writeWorks(works) {
+  const data = JSON.stringify(works, null, 2);
   try {
-    const data = JSON.stringify(works, null, 2);
-    // 原子写入：先写临时文件，再重命名替换
-    const tmpFile = DATA_FILE + '.tmp';
-    fs.writeFileSync(tmpFile, data, 'utf-8');
-    fs.renameSync(tmpFile, DATA_FILE);
-    sync.scheduleSync();
+    const tmp = DATA_FILE + '.tmp';
+    fs.writeFileSync(tmp, data, 'utf-8');
+    fs.renameSync(tmp, DATA_FILE);
   } catch (e) {
-    console.error('写入作品数据失败:', e.message);
-    // 回退方案：直接写
-    try {
-      fs.writeFileSync(DATA_FILE, JSON.stringify(works, null, 2), 'utf-8');
-      sync.scheduleSync();
-    }
-    catch (e2) { console.error('回退写入也失败:', e2.message); }
+    try { fs.writeFileSync(DATA_FILE, data, 'utf-8'); } catch (_) {}
   }
 }
 
-// MIME 类型映射
+// ============== GitHub 同步（Vercel/Render 冷启动数据不丢的关键） ==============
+let __restored = false;
+const GH_API = 'https://api.github.com';
+function ghHeaders(acceptRaw) {
+  return {
+    'Authorization': `Bearer ${process.env.GITHUB_TOKEN}`,
+    'User-Agent': 'grsy-photography',
+    'Accept': acceptRaw ? 'application/vnd.github.raw' : 'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+  };
+}
+async function ghSyncPut(filepath, content, isBinary) {
+  const token = process.env.GITHUB_TOKEN;
+  const repo = process.env.GITHUB_REPO;
+  if (!token || !repo) return { skipped: true };
+  const url = `${GH_API}/repos/${repo}/contents/${filepath}`;
+  let sha = null;
+  try {
+    const r = await fetch(url, { headers: ghHeaders(false) });
+    if (r.ok) { const j = await r.json(); sha = j.sha; }
+  } catch (_) {}
+  const payload = { message: `sync ${filepath} ${Date.now()}`, branch: 'main' };
+  if (Buffer.isBuffer(content)) {
+    payload.content = content.toString('base64');
+  } else if (isBinary) {
+    payload.content = Buffer.from(content, 'binary').toString('base64');
+  } else {
+    payload.content = Buffer.from(content, 'utf-8').toString('base64');
+  }
+  if (sha) payload.sha = sha;
+  try {
+    const r = await fetch(url, { method: 'PUT', headers: ghHeaders(false), body: JSON.stringify(payload) });
+    return { ok: r.ok, status: r.status };
+  } catch (e) { return { ok: false, error: String(e.message || e).slice(0, 200) }; }
+}
+async function ghDelete(filepath) {
+  const token = process.env.GITHUB_TOKEN;
+  const repo = process.env.GITHUB_REPO;
+  if (!token || !repo) return { skipped: true };
+  const url = `${GH_API}/repos/${repo}/contents/${filepath}`;
+  try {
+    const g = await fetch(url, { headers: ghHeaders(false) });
+    if (!g.ok) return { ok: true, not_found: true };
+    const j = await g.json();
+    const r = await fetch(url, { method: 'DELETE', headers: ghHeaders(false), body: JSON.stringify({ message: `del ${filepath}`, sha: j.sha, branch: 'main' }) });
+    return { ok: r.ok };
+  } catch (e) { return { ok: false, error: String(e.message || e).slice(0, 200) }; }
+}
+async function ghRestoreAll() {
+  const token = process.env.GITHUB_TOKEN;
+  const repo = process.env.GITHUB_REPO;
+  if (!token || !repo) return { skipped: true };
+  let worksRestored = 0, imagesRestored = 0;
+  try {
+    const r1 = await fetch(`${GH_API}/repos/${repo}/contents/data/works.json`, { headers: ghHeaders(true) });
+    if (r1.ok) {
+      const text = await r1.text();
+      const remoteWorks = JSON.parse(text);
+      const local = readWorks();
+      const ids = new Set(local.map(w => w.id));
+      const merged = [...local];
+      for (const w of remoteWorks) if (!ids.has(w.id)) { merged.push(w); ids.add(w.id); worksRestored++; }
+      if (worksRestored > 0) writeWorks(merged);
+      for (const w of merged) {
+        if (!w.filename) continue;
+        const localPath = path.join(UPLOAD_DIR, w.filename);
+        if (fs.existsSync(localPath)) continue;
+        try {
+          const r2 = await fetch(`${GH_API}/repos/${repo}/contents/uploads/${w.filename}`, { headers: ghHeaders(true) });
+          if (r2.ok) {
+            const buf = Buffer.from(await r2.arrayBuffer());
+            fs.writeFileSync(localPath, buf);
+            imagesRestored++;
+          }
+        } catch (_) {}
+      }
+    }
+  } catch (_) {}
+  return { worksRestored, imagesRestored };
+}
+async function ensureRestored() {
+  if (__restored) return;
+  __restored = true;
+  if (process.env.VERCEL || process.env.RENDER || process.env.GITHUB_TOKEN) {
+    try { await ghRestoreAll(); } catch (_) {}
+  }
+}
+function bg(fn) { if (typeof setImmediate !== 'undefined') setImmediate(fn); else Promise.resolve().then(fn); }
+function syncAfterWriteWorks() {
+  bg(async () => { try { await ghSyncPut('data/works.json', JSON.stringify(readWorks(), null, 2), false); } catch (_) {} });
+}
+function syncAfterUpload(filename, buffer) {
+  bg(async () => { try { await ghSyncPut(`uploads/${filename}`, buffer, true); } catch (_) {} });
+}
+function syncAfterDelete(filename) {
+  bg(async () => { try { await ghDelete(`uploads/${filename}`); } catch (_) {} });
+}
+
+// ============== 响应工具 ==============
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.js': 'application/javascript; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.webp': 'image/webp',
-  '.svg': 'image/svg+xml',
-  '.ico': 'image/x-icon',
-  '.woff': 'font/woff',
-  '.woff2': 'font/woff2',
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon', '.woff': 'font/woff', '.woff2': 'font/woff2',
 };
-
-function getMIME(filePath) {
-  return MIME[path.extname(filePath).toLowerCase()] || 'application/octet-stream';
-}
-
-// 发送 JSON 响应
+function getMIME(p) { return MIME[path.extname(p).toLowerCase()] || 'application/octet-stream'; }
 function sendJSON(res, data, status = 200) {
   const body = JSON.stringify(data);
   res.writeHead(status, {
@@ -190,142 +198,82 @@ function sendJSON(res, data, status = 200) {
   });
   res.end(body);
 }
-
-// 发送静态文件（支持 Range，大图片更友好）
 function sendFile(res, filePath) {
   if (!fs.existsSync(filePath)) return false;
   const stat = fs.statSync(filePath);
   const ext = path.extname(filePath).toLowerCase();
-  const isImage = ['.jpg','.jpeg','.png','.gif','.webp','.svg'].includes(ext);
-  if (isImage) {
-    // 支持 Range 请求，方便浏览器缓存/加载
-    res.writeHead(200, {
-      'Content-Type': getMIME(filePath),
-      'Content-Length': stat.size,
-      'Cache-Control': 'public, max-age=31536000, immutable',
-    });
-  } else {
-    res.writeHead(200, {
-      'Content-Type': getMIME(filePath),
-      'Content-Length': stat.size,
-      'Cache-Control': 'no-cache',
-    });
-  }
+  const isImg = ['.jpg','.jpeg','.png','.gif','.webp','.svg'].includes(ext);
+  res.writeHead(200, {
+    'Content-Type': getMIME(filePath),
+    'Content-Length': stat.size,
+    'Cache-Control': isImg ? 'public, max-age=31536000, immutable' : 'no-cache',
+  });
   fs.createReadStream(filePath).pipe(res);
   return true;
 }
 
-// 解析 multipart/form-data（简化版，支持多文件上传）
-function parseMultipart(req) {
+// ============== Body 解析 ==============
+function parseMultipart(req, maxBytes = 100 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
-    const contentType = req.headers['content-type'] || '';
-    const match = contentType.match(/boundary=(.+)/);
-    if (!match) return reject(new Error('非 multipart 请求'));
-    const boundary = '--' + match[1];
-    const chunks = [];
-    let size = 0;
-    const MAX = 100 * 1024 * 1024; // 100MB 限制
-    req.on('data', chunk => {
-      size += chunk.length;
-      if (size > MAX) {
-        reject(new Error('请求过大'));
-        req.destroy();
-        return;
-      }
-      chunks.push(chunk);
-    });
+    const ct = req.headers['content-type'] || '';
+    const m = ct.match(/boundary=(.+)/);
+    if (!m) return reject(new Error('non-multipart'));
+    const boundary = '--' + m[1];
+    const chunks = []; let size = 0;
+    req.on('data', c => { size += c.length; if (size > maxBytes) { reject(new Error('too large')); req.destroy(); return; } chunks.push(c); });
     req.on('end', () => {
       try {
         const buf = Buffer.concat(chunks);
-        const parts = [];
-        let start = 0;
-        while (start < buf.length) {
-          // 找下一个 boundary
-          const idx = buf.indexOf(boundary, start);
-          if (idx === -1) break;
-          // 跳过 boundary + \r\n
-          let headerStart = idx + boundary.length + 2;
-          const headerEnd = buf.indexOf('\r\n\r\n', headerStart);
-          if (headerEnd === -1) break;
-          const headerBuf = buf.slice(headerStart, headerEnd);
-          const headerStr = headerBuf.toString('utf-8');
-          const nextBoundary = buf.indexOf(boundary, headerEnd + 4);
-          if (nextBoundary === -1) break;
-          const bodyBuf = buf.slice(headerEnd + 4, nextBoundary - 2); // -2 for \r\n before boundary
-
-          const dispositionMatch = headerStr.match(/name="([^"]+)"(?:;\s*filename="([^"]*)")?/);
-          if (dispositionMatch) {
-            parts.push({
-              name: dispositionMatch[1],
-              filename: dispositionMatch[2] || null,
-              data: bodyBuf,
-            });
-          }
-          start = nextBoundary;
+        const parts = []; let s = 0;
+        while (s < buf.length) {
+          const idx = buf.indexOf(boundary, s); if (idx === -1) break;
+          const hs = idx + boundary.length + 2;
+          const he = buf.indexOf('\r\n\r\n', hs); if (he === -1) break;
+          const headers = buf.slice(hs, he).toString('utf-8');
+          const nb = buf.indexOf(boundary, he + 4); if (nb === -1) break;
+          const body = buf.slice(he + 4, nb - 2);
+          const dm = headers.match(/name="([^"]+)"(?:;\s*filename="([^"]*)")?/);
+          if (dm) parts.push({ name: dm[1], filename: dm[2] || null, data: body });
+          s = nb;
         }
-        // 字段解析
-        const fields = {};
-        const files = [];
-        parts.forEach(p => {
-          if (p.filename === null) {
-            fields[p.name] = p.data.toString('utf-8');
-          } else {
-            files.push(p);
-          }
-        });
+        const fields = {}; const files = [];
+        parts.forEach(p => p.filename === null ? (fields[p.name] = p.data.toString('utf-8')) : files.push(p));
         resolve({ fields, files });
-      } catch (e) {
-        reject(e);
-      }
-    });
-    req.on('error', reject);
-  });
-}
-
-// 解析 JSON body
-function parseJSON(req) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    let size = 0;
-    req.on('data', chunk => {
-      size += chunk.length;
-      if (size > 10 * 1024 * 1024) { reject(new Error('JSON 过大')); req.destroy(); return; }
-      chunks.push(chunk);
-    });
-    req.on('end', () => {
-      try {
-        const body = Buffer.concat(chunks).toString('utf-8');
-        resolve(body ? JSON.parse(body) : {});
       } catch (e) { reject(e); }
     });
     req.on('error', reject);
   });
 }
-
-// 生成安全文件名
-function safeFilename(originalName) {
-  const ext = path.extname(originalName || '').toLowerCase();
+function parseJSON(req, max = 10 * 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    const chunks = []; let s = 0;
+    req.on('data', c => { s += c.length; if (s > max) { reject(new Error('too large')); req.destroy(); return; } chunks.push(c); });
+    req.on('end', () => { try { const t = Buffer.concat(chunks).toString('utf-8'); resolve(t ? JSON.parse(t) : {}); } catch (e) { reject(e); } });
+    req.on('error', reject);
+  });
+}
+function safeFilename(orig) {
+  const ext = path.extname(orig || '').toLowerCase();
   const rand = crypto.randomBytes(4).toString('hex');
-  const nameWithoutExt = (originalName || 'image').replace(ext, '');
-  const base = nameWithoutExt.replace(/[^\x00-\x7F]/g, 'x').replace(/[^a-zA-Z0-9_\-.]/g, '_').slice(0, 40);
+  const name = (orig || 'image').replace(ext, '');
+  const base = name.replace(/[^\x00-\x7F]/g, 'x').replace(/[^a-zA-Z0-9_\-.]/g, '_').slice(0, 40);
   return `${Date.now()}_${rand}_${base}${ext}`;
 }
 
-// 路由处理
+// ============== 主请求处理（共享给 server.js 和 Vercel handler） ==============
 async function handleRequest(req, res) {
+  if (!__restored) { try { await ensureRestored(); } catch (_) {} }
+
   const parsed = url.parse(req.url, true);
   const pathname = decodeURIComponent(parsed.pathname);
-  const query = parsed.query;
-  const method = req.method.toUpperCase();
+  const method = (req.method || 'GET').toUpperCase();
+  const ADMIN_PASSWORD_HASH = getAdminPasswordHash();
 
   try {
-    // === API 路由 ===
-
-    // 登录验证
+    // === 登录/鉴权 ===
     if (method === 'POST' && pathname === '/api/admin/login') {
       const body = await parseJSON(req);
-      const password = body.password || '';
-      const hash = crypto.createHash('sha256').update(password).digest('hex');
+      const hash = crypto.createHash('sha256').update(body.password || '').digest('hex');
       if (hash === ADMIN_PASSWORD_HASH) {
         const token = generateSessionToken();
         sessions.set(token, { createdAt: Date.now() });
@@ -338,58 +286,50 @@ async function handleRequest(req, res) {
       }
       return sendJSON(res, { success: false, message: '密码错误' }, 401);
     }
-
-    // 登出
     if (method === 'POST' && pathname === '/api/admin/logout') {
-      const cookies = req.headers['cookie'] || '';
-      const match = cookies.match(/grsy_session=([^;]+)/);
-      if (match) sessions.delete(match[1]);
-      res.writeHead(200, {
-        'Content-Type': 'application/json; charset=utf-8',
-        'Set-Cookie': 'grsy_session=; Path=/; HttpOnly; Max-Age=0',
-      });
+      const c = req.headers['cookie'] || ''; const m = c.match(/grsy_session=([^;]+)/);
+      if (m) sessions.delete(m[1]);
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Set-Cookie': 'grsy_session=; Path=/; HttpOnly; Max-Age=0' });
       res.end(JSON.stringify({ success: true }));
       return;
     }
+    if (method === 'GET' && pathname === '/api/admin/check') return sendJSON(res, { authenticated: verifySession(req) });
 
-    // 检查登录状态
-    if (method === 'GET' && pathname === '/api/admin/check') {
-      return sendJSON(res, { authenticated: verifySession(req) });
-    }
-
-    // 获取所有作品
+    // === 数据读取（公开） ===
     if (method === 'GET' && pathname === '/api/works') {
-      const works = readWorks();
-      works.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-      return sendJSON(res, works);
+      const w = readWorks(); w.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      return sendJSON(res, w);
     }
-
-    // 分类统计
     if (method === 'GET' && pathname === '/api/categories') {
-      const works = readWorks();
-      const map = {};
-      works.forEach(w => {
-        const cat = w.subcategory || w.category || '未分类';
-        map[cat] = (map[cat] || 0) + 1;
-      });
+      const w = readWorks(); const map = {};
+      w.forEach(x => { const cat = x.subcategory || x.category || '未分类'; map[cat] = (map[cat] || 0) + 1; });
       return sendJSON(res, Object.keys(map).map(name => ({ name, count: map[name] })));
     }
 
-    // 上传作品
+    // === 手动触发全量同步（测试/诊断用） ===
+    if (method === 'POST' && pathname === '/api/admin/sync-now') {
+      if (!verifySession(req)) return sendJSON(res, { success: false }, 401);
+      const w = readWorks();
+      const rMeta = await ghSyncPut('data/works.json', JSON.stringify(w, null, 2), false);
+      let imgCount = 0;
+      for (const x of w) {
+        if (!x.filename) continue;
+        const fp = path.join(UPLOAD_DIR, x.filename);
+        if (fs.existsSync(fp)) {
+          try { await ghSyncPut(`uploads/${x.filename}`, fs.readFileSync(fp), true); imgCount++; } catch (_) {}
+        }
+      }
+      return sendJSON(res, { success: true, metadata: rMeta, images: imgCount });
+    }
+
+    // === 上传 ===
     if (method === 'POST' && pathname === '/api/works') {
       if (!verifySession(req)) return sendJSON(res, { success: false, message: '未登录' }, 401);
       let parsed;
-      try {
-        parsed = await parseMultipart(req);
-      } catch (parseErr) {
-        console.error('解析multipart数据失败:', parseErr);
-        return sendJSON(res, { success: false, message: '请求解析失败：' + parseErr.message }, 400);
-      }
-
+      try { parsed = await parseMultipart(req); }
+      catch (e) { return sendJSON(res, { success: false, message: '请求解析失败: ' + e.message }, 400); }
       const { fields, files } = parsed;
-      if (!files || files.length === 0) {
-        return sendJSON(res, { success: false, message: '没有找到上传的文件' }, 400);
-      }
+      if (!files || files.length === 0) return sendJSON(res, { success: false, message: '没有上传文件' }, 400);
 
       const works = readWorks();
       const title = (fields.title || '未命名作品').toString();
@@ -397,226 +337,143 @@ async function handleRequest(req, res) {
       const category = (fields.category || '作品集').toString();
       const subcategory = (fields.subcategory || '').toString();
       const tags = (fields.tags || '').toString().split(',').map(t => t.trim()).filter(Boolean);
-
-      const newEntries = [];
-      const errors = [];
-
+      const newEntries = []; const errors = [];
+      const allowedExt = ['.jpg','.jpeg','.png','.gif','.webp','.svg','.bmp'];
       for (const f of files) {
-        // 检查文件是否有效
-        if (!f || !f.data || !f.filename) {
-          errors.push('无效的文件数据');
-          continue;
-        }
-
-        // 检查扩展名
+        if (!f || !f.data || !f.filename) { errors.push('无效文件数据'); continue; }
         const ext = path.extname(f.filename || '').toLowerCase();
-        const allowedExts = ['.jpg','.jpeg','.png','.gif','.webp','.svg','.bmp'];
-        if (!allowedExts.includes(ext)) {
-          errors.push(`文件 "${f.filename}" 格式不支持`);
-          continue;
-        }
-
-        // 检查文件大小
-        if (f.data.length > 50 * 1024 * 1024) {
-          errors.push(`文件 "${f.filename}" 超过50MB限制`);
-          continue;
-        }
-
-        // 检查是否为图片（通过文件头）
-        const isImage = f.data.length >= 4 && (
-          f.data[0] === 0xFF && f.data[1] === 0xD8 || // JPEG
-          f.data[0] === 0x89 && f.data[1] === 0x50 && f.data[2] === 0x4E && f.data[3] === 0x47 || // PNG
-          f.data[0] === 0x47 && f.data[1] === 0x49 && f.data[2] === 0x46 || // GIF
-          f.data[0] === 0x52 && f.data[1] === 0x49 && f.data[2] === 0x46 && f.data[3] === 0x46 && // WEBP (RIFF)
-          f.data[0] === 0x42 && f.data[1] === 0x4D || // BMP
-          ext === '.svg' // SVG (文本格式)
+        if (!allowedExt.includes(ext)) { errors.push(`${f.filename} 格式不支持`); continue; }
+        if (f.data.length > 50 * 1024 * 1024) { errors.push(`${f.filename} 超过50MB`); continue; }
+        const ok = f.data.length >= 4 && (
+          (f.data[0] === 0xFF && f.data[1] === 0xD8) ||
+          (f.data[0] === 0x89 && f.data[1] === 0x50 && f.data[2] === 0x4E && f.data[3] === 0x47) ||
+          (f.data[0] === 0x47 && f.data[1] === 0x49 && f.data[2] === 0x46) ||
+          (f.data[0] === 0x52 && f.data[1] === 0x49 && f.data[2] === 0x46 && f.data[3] === 0x46) ||
+          (f.data[0] === 0x42 && f.data[1] === 0x4D) ||
+          ext === '.svg'
         );
-
-        if (!isImage) {
-          errors.push(`文件 "${f.filename}" 不是有效的图片`);
-          continue;
-        }
-
-        let filename;
-        try {
-          filename = safeFilename(f.filename);
-          fs.writeFileSync(path.join(UPLOAD_DIR, filename), f.data);
-        } catch (writeErr) {
-          console.error(`写入文件失败 ${f.filename}:`, writeErr);
-          errors.push(`保存文件 "${f.filename}" 失败`);
-          continue;
-        }
-
+        if (!ok) { errors.push(`${f.filename} 不是有效图片`); continue; }
+        const filename = safeFilename(f.filename);
+        try { fs.writeFileSync(path.join(UPLOAD_DIR, filename), f.data); }
+        catch (e) { errors.push(`${f.filename} 保存失败`); continue; }
         newEntries.push({
           id: `${Date.now()}_${crypto.randomBytes(3).toString('hex')}`,
           title: files.length > 1 ? `${title} - ${path.parse(f.filename || '').name}` : title,
-          description,
-          category,
-          subcategory,
-          tags,
-          filename,
-          originalName: f.filename,
-          size: f.data.length,
-          url: `/uploads/${filename}`,
-          createdAt: Date.now(),
+          description, category, subcategory, tags,
+          filename, originalName: f.filename, size: f.data.length,
+          url: `/uploads/${filename}`, createdAt: Date.now(),
         });
+        syncAfterUpload(filename, f.data);
       }
-
-      if (newEntries.length === 0) {
-        const msg = errors.length > 0 ? errors.join('; ') : '没有成功上传任何文件';
-        return sendJSON(res, { success: false, message: msg }, 400);
-      }
-
+      if (newEntries.length === 0) return sendJSON(res, { success: false, message: errors.join('; ') || '未成功上传' }, 400);
       works.push(...newEntries);
-      try {
-        writeWorks(works);
-      } catch (writeErr) {
-        console.error('保存作品数据失败:', writeErr);
-        // 回滚已上传的文件
-        for (const entry of newEntries) {
-          try { fs.unlinkSync(path.join(UPLOAD_DIR, entry.filename)); } catch (_) {}
-        }
+      try { writeWorks(works); }
+      catch (e) {
+        newEntries.forEach(x => { try { fs.unlinkSync(path.join(UPLOAD_DIR, x.filename)); } catch(_) {} });
         return sendJSON(res, { success: false, message: '保存作品数据失败' }, 500);
       }
-
-      const successMsg = `成功上传 ${newEntries.length} 张作品`;
-      const errorMsg = errors.length > 0 ? `（${errors.length} 个文件失败：${errors.join('; ')}）` : '';
-      sendJSON(res, { success: true, message: successMsg + errorMsg, works: newEntries });
+      syncAfterWriteWorks();
+      const em = errors.length ? ` (${errors.length} 个失败: ${errors.join('; ')})` : '';
+      return sendJSON(res, { success: true, message: `成功上传 ${newEntries.length} 张${em}`, works: newEntries });
     }
 
-    // 批量删除（必须在 updateMatch 之前，否则会被正则误匹配）
+    // === 批量删除 ===
     if (method === 'POST' && pathname === '/api/works/batch-delete') {
       if (!verifySession(req)) return sendJSON(res, { success: false, message: '未登录' }, 401);
-      const body = await parseJSON(req);
-      const ids = body.ids || [];
+      const body = await parseJSON(req); const ids = body.ids || [];
       if (!Array.isArray(ids)) return sendJSON(res, { success: false }, 400);
-      const works = readWorks();
-      let removedCount = 0;
+      const works = readWorks(); let removed = 0;
       ids.forEach(id => {
-        const idx = works.findIndex(w => w.id === id);
-        if (idx !== -1) {
-          const [removed] = works.splice(idx, 1);
-          try {
-            const fp = path.join(UPLOAD_DIR, removed.filename);
-            if (fs.existsSync(fp)) fs.unlinkSync(fp);
-          } catch (e) { /* 忽略 */ }
-          removedCount++;
+        const i = works.findIndex(w => w.id === id);
+        if (i !== -1) {
+          const [r] = works.splice(i, 1);
+          try { const fp = path.join(UPLOAD_DIR, r.filename); if (fs.existsSync(fp)) fs.unlinkSync(fp); } catch (_) {}
+          syncAfterDelete(r.filename);
+          removed++;
         }
       });
-      writeWorks(works);
-      return sendJSON(res, { success: true, removedCount });
+      writeWorks(works); syncAfterWriteWorks();
+      return sendJSON(res, { success: true, removedCount: removed });
     }
 
-    // 更新作品
-    const updateMatch = pathname.match(/^\/api\/works\/(.+)$/);
-    if (method === 'PUT' && updateMatch) {
+    // === 更新 / 删除单条 ===
+    const upd = pathname.match(/^\/api\/works\/(.+)$/);
+    if (method === 'PUT' && upd) {
       if (!verifySession(req)) return sendJSON(res, { success: false, message: '未登录' }, 401);
-      const id = updateMatch[1];
-      const works = readWorks();
-      const idx = works.findIndex(w => w.id === id);
-      if (idx === -1) return sendJSON(res, { success: false, message: '作品不存在' }, 404);
-
+      const id = upd[1]; const works = readWorks();
+      const i = works.findIndex(w => w.id === id); if (i === -1) return sendJSON(res, { success: false, message: '不存在' }, 404);
       const body = await parseJSON(req);
-      if (body.title !== undefined) works[idx].title = body.title;
-      if (body.description !== undefined) works[idx].description = body.description;
-      if (body.category !== undefined) works[idx].category = body.category;
-      if (body.subcategory !== undefined) works[idx].subcategory = body.subcategory;
-      if (body.tags !== undefined) {
-        works[idx].tags = Array.isArray(body.tags) ? body.tags : String(body.tags).split(',').map(t => t.trim()).filter(Boolean);
-      }
-      works[idx].updatedAt = Date.now();
-      writeWorks(works);
-      return sendJSON(res, { success: true, data: works[idx] });
+      if (body.title !== undefined) works[i].title = body.title;
+      if (body.description !== undefined) works[i].description = body.description;
+      if (body.category !== undefined) works[i].category = body.category;
+      if (body.subcategory !== undefined) works[i].subcategory = body.subcategory;
+      if (body.tags !== undefined) works[i].tags = Array.isArray(body.tags) ? body.tags : String(body.tags).split(',').map(t => t.trim()).filter(Boolean);
+      works[i].updatedAt = Date.now();
+      writeWorks(works); syncAfterWriteWorks();
+      return sendJSON(res, { success: true, data: works[i] });
     }
-
-    // 删除作品
-    if (method === 'DELETE' && updateMatch) {
+    if (method === 'DELETE' && upd) {
       if (!verifySession(req)) return sendJSON(res, { success: false, message: '未登录' }, 401);
-      const id = updateMatch[1];
-      const works = readWorks();
-      const idx = works.findIndex(w => w.id === id);
-      if (idx === -1) return sendJSON(res, { success: false, message: '作品不存在' }, 404);
-      const [removed] = works.splice(idx, 1);
-      try {
-        const fp = path.join(UPLOAD_DIR, removed.filename);
-        if (fs.existsSync(fp)) fs.unlinkSync(fp);
-      } catch (e) { /* 忽略 */ }
-      writeWorks(works);
+      const id = upd[1]; const works = readWorks();
+      const i = works.findIndex(w => w.id === id); if (i === -1) return sendJSON(res, { success: false, message: '不存在' }, 404);
+      const [r] = works.splice(i, 1);
+      try { const fp = path.join(UPLOAD_DIR, r.filename); if (fs.existsSync(fp)) fs.unlinkSync(fp); } catch (_) {}
+      syncAfterDelete(r.filename);
+      writeWorks(works); syncAfterWriteWorks();
       return sendJSON(res, { success: true });
     }
 
-    // === 静态资源 ===
-
-    // 上传文件
+    // === 静态资源：上传文件 ===
     if (pathname.startsWith('/uploads/')) {
-      const relPath = pathname.slice('/uploads/'.length);
-      const fp = path.join(UPLOAD_DIR, relPath);
-      // 防止路径穿越
+      const rel = pathname.slice('/uploads/'.length);
+      const fp = path.join(UPLOAD_DIR, rel);
       if (!fp.startsWith(UPLOAD_DIR)) return sendJSON(res, { error: '禁止访问' }, 403);
       if (sendFile(res, fp)) return;
       return sendJSON(res, { error: '文件不存在' }, 404);
     }
 
-    // 管理后台
-    if (pathname === '/admin' || pathname === '/admin/') {
-      return sendFile(res, path.join(PUBLIC_DIR, 'admin.html'));
-    }
+    // === 页面路由 ===
+    if (pathname === '/admin' || pathname === '/admin/') return sendFile(res, path.join(PUBLIC_DIR, 'admin.html'));
+    if (pathname === '/' || pathname === '/index.html') return sendFile(res, path.join(PUBLIC_DIR, 'index.html'));
 
-    // 主页面或根
-    if (pathname === '/' || pathname === '/index.html') {
-      return sendFile(res, path.join(PUBLIC_DIR, 'index.html'));
-    }
-
-    // 其他静态资源
+    // === 其他静态（css/js/图片等） ===
     if (!pathname.startsWith('/api')) {
-      const safePath = path.normalize(pathname).replace(/^\\/, '').replace(/^\//, '');
-      const fp = path.join(PUBLIC_DIR, safePath);
-      if (fp.startsWith(PUBLIC_DIR) && fs.existsSync(fp) && fs.statSync(fp).isFile()) {
-        return sendFile(res, fp);
-      }
+      const safe = path.normalize(pathname).replace(/^\\/, '').replace(/^\//, '');
+      const fp = path.join(PUBLIC_DIR, safe);
+      if (fp.startsWith(PUBLIC_DIR) && fs.existsSync(fp) && fs.statSync(fp).isFile()) return sendFile(res, fp);
     }
 
-    // 404
     sendJSON(res, { error: 'Not Found' }, 404);
   } catch (err) {
-    console.error('请求处理错误:', err);
+    console.error('req error:', err);
     sendJSON(res, { success: false, message: err.message || '服务器错误' }, 500);
   }
 }
 
-const server = http.createServer((req, res) => {
-  handleRequest(req, res).catch(err => {
-    console.error(err);
-    try { sendJSON(res, { success: false, message: err.message }, 500); } catch (_) {}
-  });
-});
-
-// 获取本机局域网IP地址
+// ============== 本机局域网 IP ==============
 function getLocalIP() {
-  const os = require('os');
-  const interfaces = os.networkInterfaces();
-  for (const name of Object.keys(interfaces)) {
-    for (const iface of interfaces[name]) {
-      if (iface.family === 'IPv4' && !iface.internal) {
-        return iface.address;
-      }
-    }
-  }
+  const ifaces = require('os').networkInterfaces();
+  for (const n of Object.keys(ifaces)) for (const it of ifaces[n]) if (it.family === 'IPv4' && !it.internal) return it.address;
   return null;
 }
 
-server.listen(PORT, HOST, () => {
-  const localIP = getLocalIP();
-  console.log('============================================');
-  console.log('  摄影作品集站点已启动 (零依赖版本)');
-  console.log(`  本机访问:  http://localhost:${PORT}`);
-  console.log(`  管理后台:  http://localhost:${PORT}/admin`);
-  if (localIP) {
-    console.log(`  局域网访问: http://${localIP}:${PORT}`);
-  }
-  console.log('');
-  console.log('  ⚠ 其他设备无法访问时，请：');
-  console.log('  1. 以管理员身份打开 PowerShell');
-  console.log('  2. 运行: netsh advfirewall firewall add rule name="GRSY Server" dir=in action=allow protocol=TCP localport=3000');
-  console.log('============================================');
-});
+// ============== 仅在直接运行 node server.js 时启动 HTTP 监听 ==============
+if (require.main === module) {
+  const server = http.createServer((req, res) => {
+    handleRequest(req, res).catch(err => {
+      console.error(err);
+      try { sendJSON(res, { success: false, message: err.message }, 500); } catch (_) {}
+    });
+  });
+  server.listen(PORT, HOST, () => {
+    const localIP = getLocalIP();
+    console.log('============================================');
+    console.log('  摄影作品集站点已启动 (零依赖版本)');
+    console.log(`  本机访问:  http://localhost:${PORT}`);
+    console.log(`  管理后台:  http://localhost:${PORT}/admin`);
+    if (localIP) console.log(`  局域网访问: http://${localIP}:${PORT}`);
+    console.log('============================================');
+  });
+}
+
+module.exports = { handleRequest, getLocalIP, ROOT, getAdminPasswordHash };
