@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>管理后台 · GRSY</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin.css" />
+</head>
+<body>
+  <!-- 登录遮罩层 -->
+  <div id="loginOverlay" class="login-overlay">
+    <div class="login-box">
+      <div class="login-logo">
+        <span class="brand-mark">G</span>
+        <span>GRSY Studio</span>
+      </div>
+      <h2>管理后台登录</h2>
+      <form id="loginForm" class="login-form">
+        <div class="login-field">
+          <label for="adminPassword">管理密码</label>
+          <input type="password" id="adminPassword" placeholder="请输入管理密码" autocomplete="current-password" required />
+        </div>
+        <div id="loginError" class="login-error" hidden>密码错误，请重试</div>
+        <button type="submit" class="btn-primary login-btn">登 录</button>
+      </form>
+      <p class="login-hint">默认密码请联系管理员获取</p>
+    </div>
+  </div>
+
+  <header class="admin-header">
+    <div class="container admin-nav">
+      <div class="brand">
+        <span class="brand-mark">G</span>
+        <span class="brand-text">GRSY <em>Studio</em></span>
+        <span class="brand-sub">管理后台</span>
+      </div>
+      <nav>
+        <a href="/">返回作品集</a>
+        <a href="#upload" class="btn-upload">+ 上传作品</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container admin-main">
+    <!-- 统计 -->
+    <section class="stats" id="stats">
+      <div class="stat-card">
+        <div class="stat-value" id="totalCount">0</div>
+        <div class="stat-label">作品总数</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="catCount">0</div>
+        <div class="stat-label">分类数量</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="sizeCount">0 MB</div>
+        <div class="stat-label">存储占用</div>
+      </div>
+    </section>
+
+    <!-- 上传区 -->
+    <section id="upload" class="panel">
+      <h2>上传新作品</h2>
+      <form id="uploadForm" class="upload-form" enctype="multipart/form-data">
+        <div class="upload-grid">
+          <div class="field">
+            <label>作品标题</label>
+            <input type="text" name="title" placeholder="未命名作品" />
+          </div>
+          <div class="field">
+            <label>主分类</label>
+            <input type="text" name="category" list="catList" placeholder="作品集" value="作品集" />
+            <datalist id="catList"></datalist>
+          </div>
+          <div class="field">
+            <label>子分类</label>
+            <input type="text" name="subcategory" list="subcatList" placeholder="例如：人像、风景、建筑" value="人像" />
+            <datalist id="subcatList"></datalist>
+          </div>
+          <div class="field full">
+            <label>描述</label>
+            <textarea name="description" rows="2" placeholder="简短描述作品故事……"></textarea>
+          </div>
+          <div class="field full">
+            <label>标签（逗号分隔）</label>
+            <input type="text" name="tags" placeholder="自然, 光影, 清晨" />
+          </div>
+          <div class="field full">
+            <label>图片（可多选，支持 JPG/PNG/WEBP 等，单张最大 50MB）</label>
+            <div class="dropzone" id="dropzone">
+              <input type="file" name="images" id="fileInput" multiple accept="image/*" hidden />
+              <div class="dropzone-inner">
+                <div class="dz-icon">🖼️</div>
+                <p><strong>点击选择</strong> 或 <strong>拖拽图片</strong> 到此处</p>
+                <p class="dz-hint">支持多选 · 可上传多张</p>
+              </div>
+            </div>
+            <div id="previewList" class="preview-list"></div>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button type="reset" class="btn-ghost">清空</button>
+          <button type="submit" class="btn-primary">上传作品</button>
+        </div>
+      </form>
+      <div id="uploadProgress" class="progress-bar" hidden>
+        <div class="progress-fill"></div>
+      </div>
+      <div id="uploadMsg" class="msg"></div>
+    </section>
+
+    <!-- 作品管理 -->
+    <section class="panel">
+      <div class="panel-head">
+        <h2>作品管理</h2>
+        <div class="panel-actions">
+          <input type="search" id="searchInput" placeholder="搜索标题/分类/标签…" />
+          <select id="filterCat">
+            <option value="all">全部分类</option>
+          </select>
+          <button id="batchDelete" class="btn-danger" disabled>批量删除</button>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table class="work-table" id="workTable">
+          <thead>
+            <tr>
+              <th style="width:36px"><input type="checkbox" id="selectAll" /></th>
+              <th>预览</th>
+              <th>标题</th>
+              <th>子分类</th>
+              <th>主分类</th>
+              <th>标签</th>
+              <th>文件大小</th>
+              <th>上传时间</th>
+              <th style="width:160px">操作</th>
+            </tr>
+          </thead>
+          <tbody id="workBody"></tbody>
+        </table>
+        <div id="emptyAdmin" class="empty-admin" hidden>
+          <p>尚未上传任何作品。请在上方上传你的第一张作品。</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- 编辑弹窗 -->
+  <div id="editModal" class="modal" hidden>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>编辑作品</h3>
+        <button class="modal-close" aria-label="关闭">×</button>
+      </div>
+      <form id="editForm" class="modal-body">
+        <input type="hidden" name="id" />
+        <div class="field">
+          <label>作品标题</label>
+          <input type="text" name="title" required />
+        </div>
+        <div class="field">
+          <label>主分类</label>
+          <input type="text" name="category" required />
+        </div>
+        <div class="field">
+          <label>子分类</label>
+          <input type="text" name="subcategory" placeholder="例如：人像、风景、建筑" />
+        </div>
+        <div class="field">
+          <label>标签（逗号分隔）</label>
+          <input type="text" name="tags" />
+        </div>
+        <div class="field">
+          <label>描述</label>
+          <textarea name="description" rows="3"></textarea>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn-ghost" id="editCancel">取消</button>
+          <button type="submit" class="btn-primary">保存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="/admin.js"></script>
+</body>
+</html>
