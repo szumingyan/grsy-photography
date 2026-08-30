@@ -1,0 +1,16 @@
+{
+  "name": "grsy-photography",
+  "version": "1.0.0",
+  "description": "个人摄影作品集网站 - 支持作品管理与跨设备访问",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "engines": {
+    "node": ">=16"
+  },
+  "keywords": ["photography", "portfolio", "个人摄影"],
+  "author": "GRSY",
+  "license": "MIT"
+}
