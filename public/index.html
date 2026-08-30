@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>光影 · LUMEN Photography</title>
+  <meta name="description" content="用镜头记录时间，用光影诉说故事" />
+  <link rel="stylesheet" href="/styles.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;1,300;1,400&family=Noto+Serif+SC:wght@300;400;500;600&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <!-- 预加载动画 -->
+  <div id="preloader" class="preloader">
+    <div class="preloader-inner">
+      <div class="preloader-logo">L<span>·</span>MEN</div>
+      <div class="preloader-bar"><span></span></div>
+    </div>
+  </div>
+
+  <!-- 导航 -->
+  <header class="nav" id="nav">
+    <div class="nav-inner">
+      <a href="/" class="brand">
+        <span class="brand-mark">L</span>
+        <span class="brand-text">LUMEN</span>
+      </a>
+      <nav class="nav-links">
+        <a href="#works" class="nav-link" data-text="作品">作品</a>
+        <a href="#philosophy" class="nav-link" data-text="理念">理念</a>
+        <a href="#about" class="nav-link" data-text="关于">关于</a>
+        <a href="/admin" class="nav-link nav-link-admin" data-text="管理">管理</a>
+      </nav>
+      <button class="nav-toggle" id="navToggle" aria-label="菜单">
+        <span></span><span></span><span></span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Hero 区域 -->
+  <section class="hero" id="hero">
+    <div class="hero-bg" id="heroBg"></div>
+    <div class="hero-overlay"></div>
+    <div class="hero-inner">
+      <div class="hero-subtitle-top">PHOTOGRAPHY · EST. 2024</div>
+      <h1 class="hero-title">
+        <span class="title-line">光</span>
+        <span class="title-line">影</span>
+        <span class="title-dot">.</span>
+      </h1>
+      <p class="hero-subtitle">用镜头记录时间，用光影诉说故事</p>
+      <div class="hero-actions">
+        <a href="#works" class="hero-cta">
+          <span>浏览作品</span>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        </a>
+        <a href="#about" class="hero-link">了解更多</a>
+      </div>
+    </div>
+    <div class="scroll-indicator">
+      <span>SCROLL</span>
+      <div class="scroll-line"></div>
+    </div>
+    <div class="hero-stats">
+      <div class="stat-item">
+        <span class="stat-num" id="statWorks">0</span>
+        <span class="stat-label">作品</span>
+      </div>
+      <div class="stat-divider"></div>
+      <div class="stat-item">
+        <span class="stat-num" id="statCats">0</span>
+        <span class="stat-label">分类</span>
+      </div>
+      <div class="stat-divider"></div>
+      <div class="stat-item">
+        <span class="stat-num">∞</span>
+        <span class="stat-label">故事</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- 作品展示 -->
+  <section id="works" class="works-section">
+    <div class="container">
+      <div class="section-header reveal">
+        <div class="section-title-wrap">
+          <span class="section-number">01</span>
+          <h2 class="section-title">作品集</h2>
+          <span class="section-line"></span>
+        </div>
+        <p class="section-desc">每一帧都是时间的切片，每一帧都是情感的凝结</p>
+        <div class="filters" id="filters">
+          <button class="filter-btn active" data-cat="all">
+            <span class="filter-label">全部</span>
+            <span class="filter-count" id="countAll">0</span>
+          </button>
+          <button class="filter-btn" data-cat="人像">
+            <span class="filter-label">人像</span>
+            <span class="filter-count" id="countPortrait">0</span>
+          </button>
+          <button class="filter-btn" data-cat="风景">
+            <span class="filter-label">风景</span>
+            <span class="filter-count" id="countLandscape">0</span>
+          </button>
+          <button class="filter-btn" data-cat="建筑">
+            <span class="filter-label">建筑</span>
+            <span class="filter-count" id="countArchitecture">0</span>
+          </button>
+          <button class="filter-btn" data-cat="微距">
+            <span class="filter-label">微距</span>
+            <span class="filter-count" id="countMacro">0</span>
+          </button>
+          <button class="filter-btn" data-cat="街拍">
+            <span class="filter-label">街拍</span>
+            <span class="filter-count" id="countStreet">0</span>
+          </button>
+        </div>
+      </div>
+      <div id="gallery" class="gallery">
+        <div class="loading">
+          <div class="loading-spinner"></div>
+          <span>加载作品中...</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 摄影理念 -->
+  <section id="philosophy" class="philosophy-section">
+    <div class="container">
+      <div class="philosophy-grid">
+        <div class="philosophy-item reveal">
+          <div class="philosophy-icon">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+          </div>
+          <h3>捕捉瞬间</h3>
+          <p>每一个瞬间都是独一无二的，摄影让时间在光影中凝固</p>
+        </div>
+        <div class="philosophy-item reveal">
+          <div class="philosophy-icon">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+          </div>
+          <h3>观察世界</h3>
+          <p>镜头是另一种眼睛，让我们看到平凡中的不凡</p>
+        </div>
+        <div class="philosophy-item reveal">
+          <div class="philosophy-icon">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+          </div>
+          <h3>讲述故事</h3>
+          <p>每张照片都有它的故事，等待被发现、被解读、被铭记</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 关于 -->
+  <section id="about" class="about-section">
+    <div class="container">
+      <div class="about-grid">
+        <div class="about-text reveal">
+          <span class="section-number">02</span>
+          <h2 class="section-title">关于我</h2>
+          <div class="about-content">
+            <p>我是一位热爱摄影的创作者，专注于捕捉自然与生活中最真实的瞬间。</p>
+            <p>每一张照片都是时间的切片，记录着光影的流转与情感的涌动。我相信，好的照片不需要言语，它自会与观者的心灵对话。</p>
+            <p>从清晨的第一缕阳光到深夜的星光，从城市的喧嚣到山野的静谧——我用镜头，讲述那些值得被铭记的故事。</p>
+          </div>
+          <div class="about-meta">
+            <div class="meta-item">
+              <span class="meta-value">2024</span>
+              <span class="meta-label">开始创作</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-value">100+</span>
+              <span class="meta-label">作品数量</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-value">5</span>
+              <span class="meta-label">拍摄主题</span>
+            </div>
+          </div>
+        </div>
+        <div class="about-visual reveal">
+          <div class="about-placeholder">
+            <div class="about-line"></div>
+            <div class="about-line" style="width: 80%"></div>
+            <div class="about-line" style="width: 60%"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 页脚 -->
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-content">
+        <div class="footer-brand">
+          <span class="footer-logo">L<span>·</span>MEN</span>
+          <p>光影摄影作品集</p>
+        </div>
+        <div class="footer-links">
+          <h4>探索</h4>
+          <a href="#works">作品集</a>
+          <a href="#philosophy">摄影理念</a>
+          <a href="#about">关于</a>
+        </div>
+        <div class="footer-links">
+          <h4>管理</h4>
+          <a href="/admin">后台登录</a>
+          <a href="/admin?tab=works">作品管理</a>
+        </div>
+        <div class="footer-links">
+          <h4>联系</h4>
+          <a href="mailto:mingyanszu@163.com" title="发送邮件">✉ mingyanszu@163.com</a>
+          <a href="#" id="qqLink" title="点击显示QQ号码">💬 QQ: 2246834216</a>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <p class="copyright">© <span id="year"></span> LUMEN Photography · All rights reserved</p>
+        <p class="footer-tag">Crafted with ♥ for light and shadow</p>
+      </div>
+    </div>
+  </footer>
+
+  <!-- 灯箱 -->
+  <div id="lightbox" class="lightbox" aria-hidden="true">
+    <div class="lb-backdrop"></div>
+    <button class="lb-close" aria-label="关闭">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+    </button>
+    <div class="lb-wrap">
+      <button class="lb-nav lb-prev" aria-label="上一张">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <figure class="lb-content">
+        <div class="lb-image-wrap">
+          <img id="lbImg" src="" alt="" />
+        </div>
+        <figcaption id="lbCaption"></figcaption>
+        <div class="lb-counter">
+          <span id="lbCurrent">1</span>
+          <span class="lb-sep">/</span>
+          <span id="lbTotal">1</span>
+        </div>
+      </figure>
+      <button class="lb-nav lb-next" aria-label="下一张">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- 回到顶部 -->
+  <button class="back-to-top" id="backToTop" aria-label="回到顶部">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 15l-6-6-6 6"/></svg>
+  </button>
+
+  <script src="/app.js"></script>
+  <script>
+    // QQ号点击复制
+    document.getElementById('qqLink').addEventListener('click', function(e) {
+      e.preventDefault();
+      const qq = '2246834216';
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(qq).then(() => {
+          alert('QQ号码已复制到剪贴板：' + qq);
+        }).catch(() => {
+          prompt('请复制QQ号码：', qq);
+        });
+      } else {
+        prompt('请复制QQ号码：', qq);
+      }
+    });
+  </script>
+</body>
+</html>
