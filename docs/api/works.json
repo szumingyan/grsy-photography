@@ -122,15 +122,16 @@
   },
   {
     "id": "1788183679447_feb06084",
-    "title": "未命名作品",
+    "title": "白裙洛语",
     "description": "",
     "category": "作品集",
-    "subcategory": "未分类",
+    "subcategory": "人像",
     "tags": [],
     "filename": "1788183679447_feb06084_xxxxxxx__1_.png",
     "originalName": "1788183679447_feb06084_xxxxxxx__1_.png",
     "size": 6756183,
     "url": "uploads/1788183679447_feb06084_xxxxxxx__1_.png",
-    "createdAt": 1788183679447
+    "createdAt": 1788183679447,
+    "updatedAt": 1788187414911
   }
 ]
