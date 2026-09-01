@@ -258,11 +258,15 @@
     div.setAttribute('aria-label', work.title || '摄影作品');
 
     const imageUrl = work.url || '';
+    // 预览图地址：/uploads/xxx.png → /uploads-previews/xxx.jpg（预览缺失时回退原图）
+    const previewUrl = imageUrl
+      ? imageUrl.replace(/\/uploads\//, '/uploads-previews/').replace(/^uploads\//, 'uploads-previews/').replace(/\.(png|jpe?g|webp|gif|bmp)$/i, '.jpg')
+      : '';
     const placeholderGradient = getPlaceholderGradient(work.id, work.subcategory || work.category);
+    const fallbackSvg = `data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 800 600%22><rect width=%22800%22 height=%22600%22 fill=%22%23333%22/><text x=%22400%22 y=%22300%22 text-anchor=%22middle%22 fill=%22%23aaa%22 font-size=%2224%22 font-family=%22sans-serif%22>${encodeURIComponent(work.subcategory || work.category || '')}</text></svg>`;
 
     div.innerHTML = `
-      <img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(work.title || '')}" loading="lazy"
-           onerror="this.style.background='${placeholderGradient}';this.src='data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 800 600%22><rect width=%22800%22 height=%22600%22 fill=%22%23333%22/><text x=%22400%22 y=%22300%22 text-anchor=%22middle%22 fill=%22%23aaa%22 font-size=%2224%22 font-family=%22sans-serif%22>${encodeURIComponent(work.subcategory || work.category || '')}</text></svg>';this.onerror=null;this.classList.add('img-fallback');">
+      <img src="${escapeHtml(previewUrl || imageUrl)}" alt="${escapeHtml(work.title || '')}" loading="lazy">
       <div class="work-item-cat">${escapeHtml(work.subcategory || work.category || '未分类')}</div>
       <div class="work-item-overlay">
         <div class="work-item-info">
@@ -271,6 +275,20 @@
         </div>
       </div>
     `;
+
+    // 加载失败回退：预览图 → 原图 → 占位图
+    const imgEl = div.querySelector('img');
+    imgEl.onerror = function () {
+      if (!this.dataset.fb && imageUrl && !this.src.endsWith(imageUrl)) {
+        this.dataset.fb = '1';
+        this.src = imageUrl;
+        return;
+      }
+      this.onerror = null;
+      this.style.background = placeholderGradient;
+      this.src = fallbackSvg;
+      this.classList.add('img-fallback');
+    };
 
     const openLightboxHandler = () => {
       openLightbox(index);
